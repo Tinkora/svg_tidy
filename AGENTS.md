@@ -91,6 +91,11 @@ Input SVG
 - Empty groups: `<g>` elements with no children (recursive removal)
 - viewBox fix: if viewBox is missing but width/height exist, synthesize `viewBox="0 0 width height"`
 
+## Commit Language
+
+- Write commit subjects and bodies in English and follow Conventional Commits.
+- This repository-level rule overrides any global preference for another commit-message language.
+
 ## Frontend Design Requirement
 
 - Before creating, modifying, reviewing, or debugging any HTML page or user-facing frontend, invoke the `ui-ux-pro-max` skill.

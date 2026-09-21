@@ -1,0 +1,96 @@
+{
+  "name": "svg_tidy",
+  "version": "0.1.0",
+  "description": "Browser-native SVG optimization and cleanup. Minify SVG, optimize path precision, fix viewBox, convert to data URI. All in WASM.",
+  "tools": [
+    {
+      "name": "svg_tidy_minify",
+      "description": "Minify SVG content: remove comments, whitespace, metadata, and editor-specific attributes.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "svg": {
+            "type": "string",
+            "description": "Raw SVG content as a string."
+          }
+        },
+        "required": ["svg"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "svg_tidy_optimize_paths",
+      "description": "Reduce the decimal precision of path coordinates in an SVG.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "svg": {
+            "type": "string",
+            "description": "Raw SVG content."
+          },
+          "precision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 6,
+            "default": 2,
+            "description": "Number of decimal places to keep for path coordinates (0-6)."
+          }
+        },
+        "required": ["svg"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "svg_tidy_full_optimize",
+      "description": "Run the full optimization pipeline: minification, path optimization, viewBox fix, and empty group removal. Returns optimized SVG and stats.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "svg": {
+            "type": "string",
+            "description": "Raw SVG content."
+          },
+          "precision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 6,
+            "default": 2,
+            "description": "Number of decimal places for path coordinates (0-6)."
+          }
+        },
+        "required": ["svg"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "svg_tidy_analyze",
+      "description": "Analyze SVG content to extract metadata (dimensions, element counts) and security information (scripts, external references).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "svg": {
+            "type": "string",
+            "description": "Raw SVG content."
+          }
+        },
+        "required": ["svg"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "svg_tidy_to_data_uri",
+      "description": "Convert SVG content to a data:image/svg+xml URI suitable for inline use in HTML or CSS.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "svg": {
+            "type": "string",
+            "description": "SVG content (can be raw or already optimized)."
+          }
+        },
+        "required": ["svg"],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

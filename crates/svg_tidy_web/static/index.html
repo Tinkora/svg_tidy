@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>svg_tidy — SVG 优化与清理</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0F172A; --surface: #1E293B; --surface2: #334155;
+    --cta: #A855F7; --cta-hover: #9333EA;
+    --text: #F8FAFC; --text-muted: #94A3B8;
+    --red: #EF4444; --green: #22C55E; --amber: #F59E0B; --blue: #3B82F6;
+    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+    --font-ui: system-ui, -apple-system, sans-serif;
+  }
+  html, body { height: 100%; overflow: hidden; }
+  body { font-family: var(--font-ui); background: var(--bg); color: var(--text); }
+  button { font-family: var(--font-ui); cursor: pointer; }
+
+  /* ── layout ── */
+  #app { display: flex; flex-direction: column; height: 100vh; }
+  #toolbar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--surface2); flex-shrink: 0; min-height: 56px; }
+  #toolbar .logo { font-family: var(--font-mono); font-size: 1rem; font-weight: 700; color: var(--cta); white-space: nowrap; }
+  #toolbar .sep { width: 1px; height: 20px; background: var(--surface2); }
+  #toolbar label { font-size: .8rem; color: var(--text-muted); white-space: nowrap; }
+  #toolbar select, #toolbar input[type=range] { background: var(--bg); color: var(--text); border: 1px solid var(--surface2); border-radius: 4px; padding: 4px 8px; font-size: .8rem; }
+  #toolbar input[type=range] { width: 80px; padding: 0; accent-color: var(--cta); }
+  #toolbar .precision-val { font-family: var(--font-mono); font-size: .8rem; color: var(--cta); min-width: 16px; text-align: center; }
+  #toolbar .check-group { display: flex; align-items: center; gap: 4px; font-size: .8rem; color: var(--text-muted); white-space: nowrap; }
+  #toolbar .check-group input { accent-color: var(--cta); }
+  #toolbar .btn { padding: 6px 14px; border-radius: 6px; border: none; font-size: .8rem; font-weight: 600; transition: all .15s; white-space: nowrap; }
+  .btn-primary { background: var(--cta); color: #fff; }
+  .btn-primary:hover { background: var(--cta-hover); }
+  .btn-primary:disabled { opacity: .4; cursor: default; }
+  .btn-outline { background: transparent; border: 1px solid var(--surface2) !important; color: var(--text); }
+  .btn-outline:hover { border-color: var(--cta) !important; color: var(--cta); }
+
+  /* ── panels ── */
+  #panels { display: flex; flex: 1; overflow: hidden; }
+  .panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .panel + .panel { border-left: 1px solid var(--surface2); }
+  .panel-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; background: var(--surface); border-bottom: 1px solid var(--surface2); flex-shrink: 0; }
+  .panel-header h3 { font-size: .85rem; font-weight: 600; color: var(--text-muted); }
+  .panel-header .badge { font-size: .7rem; padding: 2px 8px; border-radius: 10px; background: var(--surface2); color: var(--text-muted); }
+  .panel-body { flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; }
+
+  /* ── editor ── */
+  .editor-wrap { flex: 1; position: relative; }
+  .editor-wrap textarea { width: 100%; height: 100%; padding: 16px; border: none; resize: none; background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: .8rem; line-height: 1.6; tab-size: 2; outline: none; }
+  .editor-wrap textarea::placeholder { color: var(--text-muted); opacity: .5; }
+  .drop-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgb(168 85 247 / .12); border: 2px dashed var(--cta); z-index: 10; pointer-events: none; opacity: 0; transition: opacity .2s; }
+  .drop-overlay.active { opacity: 1; }
+  .drop-overlay span { font-size: 1.2rem; color: var(--cta); font-weight: 600; }
+
+  /* ── preview ── */
+  #preview-area { height: 200px; flex-shrink: 0; background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="10" height="10" fill="%23333"/><rect x="10" y="10" width="10" height="10" fill="%23333"/><rect x="10" width="10" height="10" fill="%23222"/><rect y="10" width="10" height="10" fill="%23222"/></svg>'); display: flex; align-items: center; justify-content: center; border-bottom: 1px solid var(--surface2); position: relative; }
+  #preview-area img { max-width: 90%; max-height: 90%; }
+  #preview-area .placeholder { color: var(--text-muted); font-size: .85rem; }
+
+  /* ── stats ── */
+  #stats-bar { display: flex; gap: 16px; padding: 8px 16px; background: var(--surface); border-top: 1px solid var(--surface2); flex-shrink: 0; font-size: .78rem; color: var(--text-muted); flex-wrap: wrap; }
+  .stat-item { display: flex; align-items: center; gap: 4px; }
+  .stat-item .val { color: var(--text); font-weight: 600; font-family: var(--font-mono); }
+  .stat-item .val.green { color: var(--green); }
+  .stat-item .val.amber { color: var(--amber); }
+  .stat-item .val.red { color: var(--red); }
+
+  /* ── toast ── */
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); padding: 10px 24px; border-radius: 8px; background: var(--green); color: #000; font-size: .85rem; font-weight: 600; z-index: 100; opacity: 0; transition: opacity .25s; pointer-events: none; }
+  #toast.show { opacity: 1; }
+
+  /* ── responsive ── */
+  @media (max-width: 768px) {
+    #toolbar { flex-wrap: wrap; gap: 8px; padding: 8px; }
+    #panels { flex-direction: column; }
+    .panel + .panel { border-left: none; border-top: 1px solid var(--surface2); }
+    #preview-area { height: 150px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <!-- Toolbar -->
+  <div id="toolbar">
+    <span class="logo">svg_tidy</span>
+    <span class="sep"></span>
+
+    <label for="precision">精度</label>
+    <input type="range" id="precision" min="0" max="6" value="2">
+    <span class="precision-val" id="precision-val">2</span>
+
+    <span class="sep"></span>
+
+    <span class="check-group">
+      <input type="checkbox" id="opt-comments" checked>
+      <label for="opt-comments">注释</label>
+    </span>
+    <span class="check-group">
+      <input type="checkbox" id="opt-metadata" checked>
+      <label for="opt-metadata">元数据</label>
+    </span>
+    <span class="check-group">
+      <input type="checkbox" id="opt-editor" checked>
+      <label for="opt-editor">编辑器</label>
+    </span>
+    <span class="check-group">
+      <input type="checkbox" id="opt-empty-groups" checked>
+      <label for="opt-empty-groups">空组</label>
+    </span>
+    <span class="check-group">
+      <input type="checkbox" id="opt-paths" checked>
+      <label for="opt-paths">路径</label>
+    </span>
+    <span class="check-group">
+      <input type="checkbox" id="opt-viewbox" checked>
+      <label for="opt-viewbox">viewBox</label>
+    </span>
+
+    <span class="sep"></span>
+    <button class="btn btn-primary" id="btn-optimize">优化</button>
+    <button class="btn btn-outline" id="btn-reset">重置</button>
+  </div>
+
+  <!-- Main panels -->
+  <div id="panels">
+    <!-- Left: Original -->
+    <div class="panel">
+      <div class="panel-header">
+        <h3>原始 SVG</h3>
+        <span class="badge" id="badge-original">0 B</span>
+      </div>
+      <div class="panel-body">
+        <div class="editor-wrap" id="wrap-original">
+          <textarea id="input-svg" placeholder="在此粘贴 SVG 代码，或拖放 .svg 文件..."></textarea>
+          <div class="drop-overlay" id="drop-overlay"><span>释放文件以载入</span></div>
+        </div>
+        <div id="input-info" style="padding:6px 16px;font-size:.75rem;color:var(--text-muted);flex-shrink:0;"></div>
+      </div>
+    </div>
+
+    <!-- Right: Optimized -->
+    <div class="panel">
+      <div class="panel-header">
+        <h3>优化结果</h3>
+        <span class="badge" id="badge-optimized">等待优化</span>
+      </div>
+      <div class="panel-body">
+        <div id="preview-area" class="placeholder">预览区域</div>
+        <div class="editor-wrap">
+          <textarea id="output-svg" placeholder="点击「优化」查看结果..." readonly></textarea>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stats bar -->
+  <div id="stats-bar">
+    <span class="stat-item">原始: <span class="val" id="stat-original">—</span></span>
+    <span class="stat-item">优化: <span class="val" id="stat-optimized">—</span></span>
+    <span class="stat-item">节省: <span class="val green" id="stat-savings">—</span></span>
+    <span class="stat-item">路径: <span class="val" id="stat-paths">—</span></span>
+    <span class="stat-item">移除: <span class="val amber" id="stat-removed">—</span></span>
+    <span class="stat-item" id="stat-scripts" hidden>⚠️ 含脚本</span>
+    <span class="stat-item" id="stat-extrefs" hidden>🔗 含外部引用</span>
+    <span style="flex:1;"></span>
+    <button class="btn btn-outline" id="btn-copy-svg" disabled>复制 SVG</button>
+    <button class="btn btn-outline" id="btn-download" disabled>下载 .svg</button>
+    <button class="btn btn-outline" id="btn-copy-uri" disabled>复制 Data URI</button>
+  </div>
+
+  <footer style="padding:8px 16px;text-align:center;color:var(--text-muted, #94a3b8);font-size:12px;line-height:1.4;flex:0 0 auto;">svg_tidy by Tinkora</footer>
+
+  <!-- Toast -->
+  <div id="toast"></div>
+</div>
+
+<script type="module">
+  // We fetch wasm but also support a fallback JS-only path during dev
+  let wasm = null;
+
+  async function initWasm() {
+    try {
+      const mod = await import('./pkg/svg_tidy_web.js');
+      await mod.default();
+      wasm = mod;
+      console.log('WASM loaded');
+    } catch (e) {
+      console.warn('WASM not available, using JS fallback:', e);
+      wasm = null;
+    }
+  }
+
+  // ── DOM refs ──
+  const $ = (s) => document.querySelector(s);
+  const inputSvg = $('#input-svg');
+  const outputSvg = $('#output-svg');
+  const previewArea = $('#preview-area');
+  const dropOverlay = $('#drop-overlay');
+  const toast = $('#toast');
+
+  // ── JS fallback implementations ──
+  // These mirror the Rust logic so the UI works even without WASM during development.
+
+  function jsRemoveComments(svg) {
+    return svg.replace(/<!--[\s\S]*?-->/g, '');
+  }
+
+  function jsRemoveMetadata(svg) {
+    return svg
+      .replace(/<metadata\b[^>]*>[\s\S]*?<\/metadata>/gi, '')
+      .replace(/<rdf:RDF\b[^>]*>[\s\S]*?<\/rdf:RDF>/gi, '')
+      .replace(/<(?:dc|cc):\w+\b[^>]*>[\s\S]*?<\/(?:dc|cc):\w+>/gi, '');
+  }
+
+  function jsRemoveEditorData(svg) {
+    return svg
+      .replace(/\s*xmlns:sodipodi\s*=\s*"[^"]*"/g, '')
+      .replace(/\s*xmlns:inkscape\s*=\s*"[^"]*"/g, '')
+      .replace(/\s*xmlns:ai\s*=\s*"[^"]*"/g, '')
+      .replace(/\s*xmlns:graph\s*=\s*"[^"]*"/g, '')
+      .replace(/\s*xmlns:serif\s*=\s*"[^"]*"/g, '')
+      .replace(/\s*sodipodi:\w+\s*=\s*"[^"]*"/g, '')
+      .replace(/\s*inkscape:\w+\s*=\s*"[^"]*"/g, '')
+      .replace(/\s*ai:\w+\s*=\s*"[^"]*"/g, '')
+      .replace(/\s*serif:\w+\s*=\s*"[^"]*"/g, '');
+  }
+
+  function jsCollapseWhitespace(svg) {
+    // Protect <style>, <text>, <tspan> content
+    const protected_ = [];
+    let result = svg.replace(/(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi, (_, p1, p2, p3) => {
+      const idx = protected_.length;
+      protected_.push(p2);
+      return `${p1}__SVGTIDY_PROTECTED_STYLE_${idx}__${p3}`;
+    });
+    result = result.replace(/(<(?:text|tspan)\b[^>]*>)([\s\S]*?)(<\/(?:text|tspan)>)/gi, (_, p1, p2, p3) => {
+      const idx = protected_.length;
+      protected_.push(p2);
+      return `${p1}__SVGTIDY_PROTECTED_TEXT_${idx}__${p3}`;
+    });
+
+    // Collapse
+    result = result.replace(/\s{2,}/g, ' ');
+    result = result.replace(/>\s+</g, '><');
+    result = result.trim();
+
+    // Restore
+    result = result.replace(/__SVGTIDY_PROTECTED_(?:STYLE|TEXT)_(\d+)__/g, (_, idx) => {
+      return protected_[parseInt(idx)] || '';
+    });
+    return result;
+  }
+
+  function jsRemoveEmptyGroups(svg) {
+    let prev;
+    do {
+      prev = svg;
+      svg = svg.replace(/<g\b[^>]*>\s*<\/g>/gi, '');
+    } while (svg !== prev);
+    return svg;
+  }
+
+  function jsOptimizePaths(svg, precision) {
+    return svg.replace(/\bd\s*=\s*"([^"]*)"/g, (full, d) => {
+      const optimized = d.replace(/(\d+\.?\d*|\.\d+)/g, (num) => {
+        const v = parseFloat(num);
+        if (precision === 0) return String(Math.round(v));
+        return v.toFixed(precision);
+      });
+      return `d="${optimized}"`;
+    });
+  }
+
+  function jsFixViewbox(svg) {
+    if (/\bviewBox\s*=/.test(svg)) return svg;
+    const wm = svg.match(/\bwidth\s*=\s*"(\d+(?:\.\d+)?)"/);
+    const hm = svg.match(/\bheight\s*=\s*"(\d+(?:\.\d+)?)"/);
+    if (wm && hm) {
+      const vb = `viewBox="0 0 ${wm[1]} ${hm[1]}" `;
+      return svg.replace(/(<svg\b[^>]*?)(\s*\/?>)/, (_, tag, close) => {
+        return close.startsWith('/') ? `${tag} ${vb}/>` : `${tag} ${vb}>`;
+      });
+    }
+    return svg;
+  }
+
+  function jsSvgToDataUri(svg) {
+    return 'data:image/svg+xml,' + encodeURIComponent(svg)
+      .replace(/#/g, '%23')
+      .replace(/'/g, '%27');
+  }
+
+  function jsAnalyzeSvg(svg) {
+    return {
+      width: (svg.match(/\bwidth\s*=\s*"(\d+(?:\.\d+)?)"/) || [])[1] || null,
+      height: (svg.match(/\bheight\s*=\s*"(\d+(?:\.\d+)?)"/) || [])[1] || null,
+      viewbox: (svg.match(/\bviewBox\s*=\s*"([^"]*)"/) || [])[1] || null,
+      elementCount: (svg.match(/<\s*\w+[\s/>]/g) || []).length,
+      pathCount: (svg.match(/<\s*path\b/gi) || []).length,
+      groupCount: (svg.match(/<\s*g\b/gi) || []).length,
+      hasScripts: /<\s*script\b/i.test(svg),
+      hasExternalRefs: /(?:href|xlink:href)\s*=\s*"https?:\/\//i.test(svg) || /url\(\s*"https?:\/\//i.test(svg),
+    };
+  }
+
+  function jsFullOptimize(svg, precision, opts) {
+    if (!svg.trim()) throw new Error('Empty SVG');
+
+    const originalSize = new TextEncoder().encode(svg).length;
+    const beforeElements = (svg.match(/<\s*\w+[\s/>]/g) || []).length;
+    const beforePaths = (svg.match(/<\s*path\b/gi) || []).length;
+
+    let result = svg;
+    let elementsRemoved = 0;
+
+    if (opts.comments) result = jsRemoveComments(result);
+    if (opts.metadata) result = jsRemoveMetadata(result);
+    if (opts.editor) result = jsRemoveEditorData(result);
+
+    result = jsCollapseWhitespace(result);
+
+    if (opts.emptyGroups) {
+      const beforeGroups = (result.match(/<\s*g\b/gi) || []).length;
+      result = jsRemoveEmptyGroups(result);
+      const afterGroups = (result.match(/<\s*g\b/gi) || []).length;
+      elementsRemoved += beforeGroups - afterGroups;
+    }
+
+    if (opts.paths) result = jsOptimizePaths(result, precision);
+    if (opts.viewbox) result = jsFixViewbox(result);
+
+    const afterElements = (result.match(/<\s*\w+[\s/>]/g) || []).length;
+    elementsRemoved += Math.max(0, beforeElements - afterElements);
+
+    const optimizedSize = new TextEncoder().encode(result).length;
+    const savings = originalSize > 0 ? ((originalSize - optimizedSize) / originalSize) * 100 : 0;
+
+    return {
+      svg: result,
+      stats: {
+        original_size: originalSize,
+        optimized_size: optimizedSize,
+        savings_percent: Math.round(savings * 10) / 10,
+        paths_optimized: beforePaths,
+        elements_removed: elementsRemoved,
+      },
+    };
+  }
+
+  // ── Main processing ──
+  async function doOptimize() {
+    const svg = inputSvg.value;
+    if (!svg.trim()) {
+      updatePreview(null);
+      return;
+    }
+
+    const precision = parseInt($('#precision').value);
+    const opts = {
+      comments: $('#opt-comments').checked,
+      metadata: $('#opt-metadata').checked,
+      editor: $('#opt-editor').checked,
+      emptyGroups: $('#opt-empty-groups').checked,
+      paths: $('#opt-paths').checked,
+      viewbox: $('#opt-viewbox').checked,
+    };
+
+    let result;
+    try {
+      if (wasm && wasm.wasm_full_optimize) {
+        // Use WASM
+        const jsResult = wasm.wasm_full_optimize(svg, precision);
+        result = { svg: jsResult.svg, stats: jsResult.stats };
+      } else {
+        // JS fallback
+        result = jsFullOptimize(svg, precision, opts);
+      }
+    } catch (e) {
+      showToast('优化失败: ' + (e.message || e), true);
+      return;
+    }
+
+    // Update output
+    outputSvg.value = result.svg;
+    updateStats(result.stats);
+    updatePreview(result.svg);
+    updateButtons(true);
+
+    // Also run analysis
+    try {
+      let info;
+      if (wasm && wasm.wasm_analyze_svg) {
+        info = wasm.wasm_analyze_svg(svg);
+      } else {
+        info = jsAnalyzeSvg(svg);
+      }
+      updateInfo(info);
+    } catch (_) {}
+  }
+
+  async function doReset() {
+    inputSvg.value = '';
+    outputSvg.value = '';
+    updatePreview(null);
+    updateStats(null);
+    updateInfo(null);
+    updateButtons(false);
+    $('#badge-original').textContent = '0 B';
+    $('#badge-optimized').textContent = '等待优化';
+  }
+
+  // ── UI updates ──
+  function updateStats(stats) {
+    if (!stats) {
+      $('#stat-original').textContent = '—';
+      $('#stat-optimized').textContent = '—';
+      $('#stat-savings').textContent = '—';
+      $('#stat-paths').textContent = '—';
+      $('#stat-removed').textContent = '—';
+      return;
+    }
+    const fmt = (b) => b >= 1024 ? (b / 1024).toFixed(1) + ' KB' : b + ' B';
+    $('#stat-original').textContent = fmt(stats.original_size);
+    $('#stat-optimized').textContent = fmt(stats.optimized_size);
+    const sp = stats.savings_percent;
+    $('#stat-savings').textContent = sp.toFixed(1) + '%';
+    $('#stat-savings').className = 'val ' + (sp > 20 ? 'green' : sp > 5 ? 'amber' : '');
+    $('#stat-paths').textContent = stats.paths_optimized + ' 条路径';
+    $('#stat-removed').textContent = stats.elements_removed + ' 个元素';
+
+    const originalBytes = new TextEncoder().encode(inputSvg.value).length;
+    const optimizedBytes = stats.optimized_size;
+    $('#badge-original').textContent = fmt(originalBytes);
+    $('#badge-optimized').textContent = fmt(optimizedBytes);
+  }
+
+  function updatePreview(svg) {
+    previewArea.innerHTML = '';
+    if (!svg) {
+      previewArea.innerHTML = '<span class="placeholder">预览区域</span>';
+      return;
+    }
+    const uri = jsSvgToDataUri(svg);
+    const img = document.createElement('img');
+    img.src = uri;
+    img.alt = 'SVG Preview';
+    img.onerror = () => {
+      previewArea.innerHTML = '<span class="placeholder" style="color:var(--red)">预览渲染失败</span>';
+    };
+    previewArea.appendChild(img);
+  }
+
+  function updateInfo(info) {
+    const el = $('#input-info');
+    if (!info) { el.textContent = ''; return; }
+    const parts = [];
+    if (info.width && info.height) parts.push(`尺寸: ${info.width}×${info.height}`);
+    if (info.viewbox) parts.push(`viewBox: ${info.viewbox}`);
+    parts.push(`${info.elementCount || '?'} 个元素`);
+    parts.push(`${info.pathCount || '?'} 个路径`);
+    el.textContent = parts.join(' · ');
+
+    const scriptEl = $('#stat-scripts');
+    const extrefEl = $('#stat-extrefs');
+    if (info.hasScripts) {
+      scriptEl.hidden = false;
+      scriptEl.className = 'stat-item';
+      scriptEl.innerHTML = '<span class="val red">⚠️ 含脚本</span>';
+    } else {
+      scriptEl.hidden = true;
+    }
+    if (info.hasExternalRefs) {
+      extrefEl.hidden = false;
+      extrefEl.className = 'stat-item';
+      extrefEl.innerHTML = '<span class="val amber">🔗 含外部引用</span>';
+    } else {
+      extrefEl.hidden = true;
+    }
+  }
+
+  function updateButtons(enabled) {
+    $('#btn-copy-svg').disabled = !enabled;
+    $('#btn-download').disabled = !enabled;
+    $('#btn-copy-uri').disabled = !enabled;
+  }
+
+  async function copyToClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('已复制到剪贴板');
+    } catch {
+      // Fallback
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      showToast('已复制到剪贴板');
+    }
+  }
+
+  function showToast(msg, isErr) {
+    toast.textContent = msg;
+    toast.style.background = isErr ? 'var(--red)' : 'var(--green)';
+    toast.classList.add('show');
+    clearTimeout(toast._timeout);
+    toast._timeout = setTimeout(() => toast.classList.remove('show'), 2000);
+  }
+
+  // ── File drop ──
+  function handleDrop(e) {
+    e.preventDefault();
+    dropOverlay.classList.remove('active');
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    if (!file.name.endsWith('.svg') && file.type !== 'image/svg+xml') {
+      showToast('仅支持 .svg 文件', true);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      inputSvg.value = reader.result;
+      updateOriginalBadge();
+      doOptimize();
+    };
+    reader.readAsText(file);
+  }
+
+  function updateOriginalBadge() {
+    const bytes = new TextEncoder().encode(inputSvg.value).length;
+    const fmt = (b) => b >= 1024 ? (b / 1024).toFixed(1) + ' KB' : b + ' B';
+    $('#badge-original').textContent = fmt(bytes);
+  }
+
+  // ── Event listeners ──
+  $('#btn-optimize').addEventListener('click', doOptimize);
+  $('#btn-reset').addEventListener('click', doReset);
+
+  $('#btn-copy-svg').addEventListener('click', () => {
+    if (outputSvg.value) copyToClipboard(outputSvg.value);
+  });
+
+  $('#btn-download').addEventListener('click', () => {
+    if (!outputSvg.value) return;
+    const blob = new Blob([outputSvg.value], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'optimized.svg';
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('已下载 optimized.svg');
+  });
+
+  $('#btn-copy-uri').addEventListener('click', () => {
+    if (!outputSvg.value) return;
+    const uri = jsSvgToDataUri(outputSvg.value);
+    copyToClipboard(uri);
+  });
+
+  $('#precision').addEventListener('input', (e) => {
+    $('#precision-val').textContent = e.target.value;
+    // Auto re-optimize on precision change if we have input
+    if (inputSvg.value.trim()) {
+      clearTimeout($('#precision')._debounce);
+      $('#precision')._debounce = setTimeout(doOptimize, 300);
+    }
+  });
+
+  // Debounced auto-optimize on input change
+  inputSvg.addEventListener('input', () => {
+    updateOriginalBadge();
+    if (inputSvg.value.trim()) {
+      clearTimeout(inputSvg._debounce);
+      inputSvg._debounce = setTimeout(doOptimize, 500);
+    } else {
+      doReset();
+    }
+  });
+
+  // Drag and drop
+  const wrapOriginal = $('#wrap-original');
+  wrapOriginal.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropOverlay.classList.add('active');
+  });
+  wrapOriginal.addEventListener('dragleave', () => {
+    dropOverlay.classList.remove('active');
+  });
+  wrapOriginal.addEventListener('drop', handleDrop);
+
+  // Checkbox changes trigger re-optimize
+  document.querySelectorAll('#toolbar input[type=checkbox]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (inputSvg.value.trim()) doOptimize();
+    });
+  });
+
+  // ── Init ──
+  initWasm().then(() => {
+    console.log('svg_tidy ready');
+  });
+
+  // Load sample SVG if URL has ?sample
+  if (location.search.includes('sample')) {
+    const sampleSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+  <!-- This is a sample SVG with various cruft to clean up -->
+  <metadata>
+    <rdf:RDF>
+      <cc:Work>
+        <dc:format>image/svg+xml</dc:format>
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <g>
+    <circle cx="100" cy="100" r="80" fill="#A855F7" stroke="#7C3AED" stroke-width="4"/>
+    <path d="M60.52341,100.18472 Q100.12345,40.56789 140.71452,100.13256" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round"/>
+    <circle cx="100" cy="100" r="50" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="8,4"/>
+  </g>
+  <g></g>
+  <g>   </g>
+</svg>`;
+    inputSvg.value = sampleSvg;
+    updateOriginalBadge();
+    setTimeout(doOptimize, 200);
+  }
+</script>
+</body>
+</html>
